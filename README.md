@@ -18,8 +18,12 @@ packages (`read:packages`), and the host pulls with them.
 
 ```sh
 PROMENTO_REGISTRY_TOKEN=<token> sh install.sh --host docker --yes --registry-user <user> \
-  [--version vX.Y.Z] [--port 4300] [--public-url http://localhost:4300]
+  [--version vX.Y.Z] [--port 4300] [--public-url http://localhost:4300] \
+  [--public-routing yes|no] [--https-email <e-mail>] [--tls-issuer acme|internal]
 ```
+
+`--public-routing yes` lets the Docker host route the public addresses of the apps Promento runs, with HTTPS on ports
+80 and 443 (`service-host-docker`'s README).
 
 ## Without piping a script into a shell
 
