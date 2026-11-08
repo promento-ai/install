@@ -14,7 +14,8 @@
 set -eu
 
 HOSTS="docker dokploy"
-DOCKER_HOST_IMAGE="ghcr.io/promento-ai/service-host-docker:latest"
+# PROMENTO_HOST_IMAGE runs another image of the Docker host, already on this machine: a build being tested.
+DOCKER_HOST_IMAGE="${PROMENTO_HOST_IMAGE:-ghcr.io/promento-ai/service-host-docker:latest}"
 DOKPLOY_HOST_README="https://github.com/promento-ai/service-host-dokploy#readme"
 REGISTRY="ghcr.io"
 
@@ -102,7 +103,7 @@ if [ -z "$registry_user" ] || [ -z "$registry_token" ]; then
 fi
 [ -n "$registry_user" ] && [ -n "$registry_token" ] || fail "a GitHub user and a token that reads packages are needed to pull Promento's images."
 printf '%s' "$registry_token" | docker login "$REGISTRY" -u "$registry_user" --password-stdin >/dev/null 2>&1 || fail "$REGISTRY refused that user and token."
-docker pull -q "$DOCKER_HOST_IMAGE" >/dev/null || fail "$REGISTRY refused $DOCKER_HOST_IMAGE."
+[ -n "${PROMENTO_HOST_IMAGE:-}" ] || docker pull -q "$DOCKER_HOST_IMAGE" >/dev/null || fail "$REGISTRY refused $DOCKER_HOST_IMAGE."
 
 [ -n "$yes" ] && passed="$passed --yes"
 
