@@ -8,6 +8,7 @@
 # unattended install:
 #
 #   … | sh -s -- --host docker --yes --registry-user <user> [--version vX.Y.Z] [--port 4300] [--public-url URL]
+#     [--public-routing yes|no] [--https-email <e-mail>] [--tls-issuer acme|internal]
 #
 # with the registry token in PROMENTO_REGISTRY_TOKEN. Promento's images are private to the promento-ai
 # organisation on GitHub: the token is a GitHub token that reads packages (read:packages).
@@ -59,7 +60,7 @@ while [ $# -gt 0 ]; do
     --host) host=${2:-}; shift 2 ;;
     --yes|-y) yes=1; shift ;;
     --registry-user) registry_user=${2:-}; shift 2 ;;
-    --version|--port|--public-url) passed="$passed $1 ${2:-}"; shift 2 ;;
+    --version|--port|--public-url|--public-routing|--https-email|--tls-issuer) passed="$passed $1 ${2:-}"; shift 2 ;;
     --help|-h) sed -n '2,13p' "$0" 2>/dev/null || true; exit 0 ;;
     *) fail "unknown option $1" ;;
   esac
