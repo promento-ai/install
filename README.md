@@ -34,4 +34,4 @@ docker run --rm -it -v /var/run/docker.sock:/var/run/docker.sock \
   ghcr.io/promento-ai/service-host-docker:latest install
 ```
 
-The design is `promento-ai/kernel` → `docs/superpowers/specs/2026-11-08-services-and-hosts-design.md` §11.
+The design is `promento-ai/core` → `docs/superpowers/specs/2026-11-08-services-and-hosts-design.md` §11.
