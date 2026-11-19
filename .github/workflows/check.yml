@@ -1,9 +1,12 @@
 # The script is POSIX sh: on every push, ShellCheck reads it and its tests, then the tests run it whole, with stand-ins
-# for docker, curl and sleep (tests/run.sh).
+# for docker, curl and sleep (tests/run.sh), under the runner's sh and under busybox's.
 name: Check
 
 on:
   push:
+
+permissions:
+  contents: read
 
 jobs:
   check:
@@ -12,3 +15,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: shellcheck --shell=sh install.sh tests/run.sh tests/stubs/docker tests/stubs/curl tests/stubs/sleep
       - run: sh tests/run.sh
+      - name: Under busybox's sh
+        run: |
+          command -v busybox > /dev/null || sudo apt-get install -y busybox > /dev/null
+          PROMENTO_TEST_SH="busybox sh" sh tests/run.sh

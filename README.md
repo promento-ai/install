@@ -7,7 +7,7 @@ curl -fsSL https://raw.githubusercontent.com/promento-ai/install/main/install.sh
   --host dokploy --url https://<host> --key-file <path>
 ```
 
-The script names a kind of host and what that host's platform asks. It pulls the host's image and runs that image's own
+The command names a kind of host and what that host's platform asks. The script pulls the host's image and runs that image's own
 installer, which makes the host; the host then installs Promento, and the command ends on two lines: where Promento
 answers, and the link that opens its setup. The script knows the kinds of host and each one's image, and nothing else of
 a platform.
@@ -45,8 +45,13 @@ GitHub user and a token:
   enter the code and approve. It asks to read packages, and nothing else. Nothing is typed in the terminal. With
   `--yes` and no token given, the script fails instead, naming the flags.
 
-The sign-in is written in a Docker configuration directory made for the run and removed at its end, whatever the end:
-the machine's Docker keeps no login of Promento's. The script then hands the user and the token to the installer, for
+A user and a token given are tried on any refusal of the registry's; the code is asked only when Docker says
+`unauthorized`, and any other failure of the pull is said as Docker says it.
+
+The sign-in is written in a Docker configuration directory made for the run, by Docker itself and by no credential
+helper of the machine's, and removed once the image is pulled, and at the run's end whatever the end, a terminal that
+hangs up among them: the machine's Docker keeps no login of Promento's. Each call to GitHub is bounded at 30 seconds,
+and the wait for the approval at the code's own life, fifteen minutes. The script then hands the user and the token to the installer, for
 the platform's own pulls. It leaves no file and no container.
 
 ## Unattended, and by an agent
