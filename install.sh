@@ -133,3 +133,30 @@ if [ -n "$token_file" ]; then
 fi
 
 docker info > /dev/null 2>&1 || fail "Docker does not answer: start it, or run this as a user allowed to use it."
+
+# The pull, tried first with no sign-in: this machine's Docker may read Promento's images already, and they are public
+# one day. A pull Docker refuses for anything else is said as Docker says it.
+if ! refusal=$(docker pull "$image" 2>&1); then
+  fail "$(printf '%s\n' "$refusal" | tail -n 1)"
+fi
+
+# The registry's user and token go to the installer together or not at all, for its platform's own pulls.
+if [ -n "$registry_user" ] && [ -n "$registry_token" ]; then
+  PROMENTO_REGISTRY_USER=$registry_user
+  PROMENTO_REGISTRY_TOKEN=$registry_token
+  export PROMENTO_REGISTRY_USER PROMENTO_REGISTRY_TOKEN
+else
+  unset PROMENTO_REGISTRY_USER PROMENTO_REGISTRY_TOKEN
+fi
+
+# The host's installer, with the machine's Docker socket and network, attached to the terminal when there is one. Each
+# variable is named and not written: its value is in no argument. The script ends with the installer's status.
+status=0
+if has_tty; then
+  docker run --rm -it --network host -v /var/run/docker.sock:/var/run/docker.sock \
+    -e PROMENTO_PLATFORM_KEY -e PROMENTO_REGISTRY_USER -e PROMENTO_REGISTRY_TOKEN "$image" install "$@" < /dev/tty || status=$?
+else
+  docker run --rm --network host -v /var/run/docker.sock:/var/run/docker.sock \
+    -e PROMENTO_PLATFORM_KEY -e PROMENTO_REGISTRY_USER -e PROMENTO_REGISTRY_TOKEN "$image" install "$@" || status=$?
+fi
+exit "$status"

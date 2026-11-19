@@ -143,6 +143,70 @@ status_is 1
 says "promento: Docker does not answer: start it, or run this as a user allowed to use it."
 has docker.calls "<info>"
 
+# --- The pull, and the installer ------------------------------------------------------------------------------------
+
+RUN="<run> <--rm> <--network> <host> <-v> </var/run/docker.sock:/var/run/docker.sock> <-e> <PROMENTO_PLATFORM_KEY> <-e> <PROMENTO_REGISTRY_USER> <-e> <PROMENTO_REGISTRY_TOKEN>"
+
+start "the host's image is pulled, and its installer run with the key of the file and the flags that are not the script's"
+printf 'the-key-of-the-file\n' > "$dir/key"
+run --host dokploy --url https://promento.example --key-file "$dir/key"
+status_is 0
+has docker.calls "<pull> <$IMAGE:latest>"
+has docker.calls "$RUN <$IMAGE:latest> <install> <--url> <https://promento.example>"
+has docker.env "PROMENTO_PLATFORM_KEY=the-key-of-the-file"
+has docker.env "PROMENTO_REGISTRY_USER unset"
+has docker.env "PROMENTO_REGISTRY_TOKEN unset"
+lacks docker.calls "the-key-of-the-file"
+lacks err "the-key-of-the-file"
+has out "Promento answers at https://promento.example"
+empty curl.calls
+
+start "a version named is the image's tag, in the pull and in the run"
+run --host=dokploy --version=v0.10.0 --url https://promento.example
+status_is 0
+has docker.calls "<pull> <$IMAGE:v0.10.0>"
+has docker.calls "$RUN <$IMAGE:v0.10.0> <install> <--url> <https://promento.example>"
+
+start "with no file, the key is the variable's"
+PROMENTO_PLATFORM_KEY="the-key-of-the-variable"
+export PROMENTO_PLATFORM_KEY
+run --host dokploy --url https://promento.example
+status_is 0
+has docker.env "PROMENTO_PLATFORM_KEY=the-key-of-the-variable"
+lacks docker.calls "the-key-of-the-variable"
+
+start "with no key at all, the installer is given none: it asks, or says what is missing"
+run --host dokploy --url https://promento.example
+status_is 0
+has docker.env "PROMENTO_PLATFORM_KEY unset"
+
+start "every flag that is not the script's reaches the installer as it was written, one argument each"
+run --dokploy-url "http://a b" --host dokploy "--other=x y" --flag --yes "it's \"quoted\""
+status_is 0
+has docker.calls "$RUN <$IMAGE:latest> <install> <--dokploy-url> <http://a b> <--other=x y> <--flag> <it's \"quoted\">"
+
+start "the script ends with the installer's status"
+printf '3' > "$dir/docker.run"
+run --host dokploy --url https://promento.example
+status_is 3
+
+start "a pull that fails for anything but a refusal is said as Docker says it, and nothing more is tried"
+for message in "Error response from daemon: denied" "Error response from daemon: dial tcp: connect: connection refused"; do
+  : > "$dir/docker.calls"
+  printf '1|%s\n' "$message" > "$dir/docker.pull"
+  run --host dokploy --url https://promento.example
+  status_is 1
+  says "promento: $message"
+  lacks docker.calls "<login>"
+  lacks docker.calls "<run>"
+done
+empty curl.calls
+
+start "with no terminal, the installer is attached to none"
+run --host dokploy --url https://promento.example
+status_is 0
+lacks docker.calls "<-it>"
+
 finish
 printf '%s cases, %s failed\n' "$cases" "$failures"
 [ "$failures" -eq 0 ]
