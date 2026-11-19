@@ -191,8 +191,7 @@ device_sign_in() {
 # A sign-in to the registry is written in a Docker configuration directory of the run's own, removed at the run's end
 # whatever the end: this machine's Docker keeps no login of Promento's.
 config=""
-clean() { [ -z "$config" ] || rm -rf "$config"; }
-trap clean EXIT
+trap '[ -z "$config" ] || rm -rf "$config"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
