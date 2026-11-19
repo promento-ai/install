@@ -1,16 +1,21 @@
-# The script is POSIX sh, checked by ShellCheck on every push.
+# The script is POSIX sh: on every push, ShellCheck reads it and its tests, then the tests run it whole, with stand-ins
+# for docker, curl and sleep (tests/run.sh), under the runner's sh and under busybox's.
 name: Check
 
 on:
   push:
 
+permissions:
+  contents: read
+
 jobs:
-  shellcheck:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck --shell=sh install.sh
-      - name: It refuses an unknown host before touching anything
+      - run: shellcheck --shell=sh install.sh tests/run.sh tests/stubs/docker tests/stubs/curl tests/stubs/sleep
+      - run: sh tests/run.sh
+      - name: Under busybox's sh
         run: |
-          if out=$(sh install.sh --host nope --yes 2>&1); then echo "accepted"; exit 1; fi
-          echo "$out" | grep -q "unknown host nope"
+          command -v busybox > /dev/null || sudo apt-get install -y busybox > /dev/null
+          PROMENTO_TEST_SH="busybox sh" sh tests/run.sh

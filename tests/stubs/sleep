@@ -1,0 +1,5 @@
+#!/bin/sh
+# A stand-in for sleep, first on PATH while tests/run.sh runs install.sh: it waits for nothing, and writes how long it
+# was asked to in the case's directory (PROMENTO_TEST_DIR), one line per call, in sleep.calls.
+set -u
+printf '%s\n' "$*" >> "${PROMENTO_TEST_DIR:?}/sleep.calls"

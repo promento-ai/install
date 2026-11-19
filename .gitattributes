@@ -1,0 +1,2 @@
+# The script and its tests are run by sh: their lines end with a line feed on every machine.
+* text=auto eol=lf

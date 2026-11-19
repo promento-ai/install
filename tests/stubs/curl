@@ -1,0 +1,24 @@
+#!/bin/sh
+# A stand-in for curl, first on PATH while tests/run.sh runs install.sh. It writes what it is given in the case's
+# directory (PROMENTO_TEST_DIR) and answers what the case wrote there:
+#
+#   curl.calls     one line per call, each argument between < and >
+#   curl.stdin     what each call read on its standard input, one after the other
+#   curl.env       per call, whether it was started with the platform's key in its environment
+#   curl.<n>       the body the n-th call answers on its standard output; without the file, the call fails (status 22)
+set -u
+dir=${PROMENTO_TEST_DIR:?}
+
+line=""
+for argument in "$@"; do line="$line <$argument>"; done
+printf '%s\n' "${line# }" >> "$dir/curl.calls"
+
+if [ -n "${PROMENTO_PLATFORM_KEY+set}" ]; then printf 'PROMENTO_PLATFORM_KEY set\n'; else printf 'PROMENTO_PLATFORM_KEY unset\n'; fi >> "$dir/curl.env"
+
+case " $* " in
+  *" @- "* | *" -K - "*) cat >> "$dir/curl.stdin"; printf '\n' >> "$dir/curl.stdin" ;;
+esac
+
+n=$(wc -l < "$dir/curl.calls" | tr -d ' ')
+[ -f "$dir/curl.$n" ] || exit 22
+cat "$dir/curl.$n"
