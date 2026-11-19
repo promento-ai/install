@@ -291,6 +291,149 @@ run --host dokploy --url https://promento.example --registry-user octo --registr
 status_is 3
 config_removed
 
+# --- GitHub's device sign-in ----------------------------------------------------------------------------------------
+
+# What GitHub answers, as it writes it (service-host-dokploy's docs/probes/dokploy-one-command-probes.md, C4, C7, C8).
+CODE="device_code=3584d83530557fdd1f46af8289938c8ef79f9dc5&expires_in=899&interval=5&user_code=WDJB-MJHT&verification_uri=https%3A%2F%2Fgithub.com%2Flogin%2Fdevice"
+PENDING="error=authorization_pending&error_description=The+authorization+request+is+still+pending.&error_uri=https%3A%2F%2Fdocs.github.com"
+TOKEN="access_token=gho_16C7e42F292c6912E7710c838347Ae178B4a&scope=read%3Apackages&token_type=bearer"
+NO_GITHUB="promento: GitHub does not answer: --registry-user and --registry-token-file give a user and a token instead."
+NOT_IN_TIME="promento: the code was not approved in time: run the command again."
+
+# The n-th answer of GitHub's.
+github() { printf '%s\n' "$2" > "$dir/curl.$1"; }
+account() {
+  cat > "$dir/curl.$1" << 'JSON'
+{
+  "login": "octocat",
+  "id": 1,
+  "node_id": "MDQ6VXNlcjE=",
+  "type": "User",
+  "name": "The Octocat",
+  "plan": {
+    "name": "free"
+  }
+}
+JSON
+}
+# A pull refused, with nothing given: the script signs in to GitHub.
+refused_pull() { printf '%s\n0|\n' "$REFUSED" > "$dir/docker.pull"; }
+
+start "a pull refused with nothing given is signed in by a code approved on GitHub"
+refused_pull
+github 1 "$CODE"
+github 2 "$PENDING"
+github 3 "$PENDING"
+github 4 "$TOKEN"
+account 5
+run --host dokploy --url https://promento.example
+status_is 0
+says "Open https://github.com/login/device and enter the code WDJB-MJHT"
+has curl.calls "<-fsS> <-X> <POST> <https://github.com/login/device/code> <--data> <@->"
+has curl.calls "<-fsS> <-X> <POST> <https://github.com/login/oauth/access_token> <--data> <@->"
+has curl.calls "<-fsS> <-K> <-> <https://api.github.com/user>"
+has curl.stdin "client_id=178c6fc778ccc68e1d6a&scope=read:packages"
+has curl.stdin "client_id=178c6fc778ccc68e1d6a&device_code=3584d83530557fdd1f46af8289938c8ef79f9dc5&grant_type=urn:ietf:params:oauth:grant-type:device_code"
+has curl.stdin "header = \"Authorization: Bearer gho_16C7e42F292c6912E7710c838347Ae178B4a\""
+[ "$(tr '\n' ' ' < "$dir/sleep.calls")" = "5 5 5 " ] || wrong "sleep was asked: $(tr '\n' ' ' < "$dir/sleep.calls")"
+made=$(config_dir)
+has docker.calls "<--config> <$made> <login> <ghcr.io> <-u> <octocat> <--password-stdin>"
+has docker.stdin "gho_16C7e42F292c6912E7710c838347Ae178B4a"
+has docker.env "PROMENTO_REGISTRY_USER=octocat"
+has docker.env "PROMENTO_REGISTRY_TOKEN=gho_16C7e42F292c6912E7710c838347Ae178B4a"
+config_removed
+
+start "the device code and the token are in no argument and in nothing the script says"
+refused_pull
+github 1 "$CODE"
+github 2 "$TOKEN"
+account 3
+run --host dokploy --url https://promento.example
+status_is 0
+for secret in 3584d83530557fdd1f46af8289938c8ef79f9dc5 gho_16C7e42F292c6912E7710c838347Ae178B4a; do
+  lacks curl.calls "$secret"
+  lacks docker.calls "$secret"
+  lacks err "$secret"
+  lacks out "$secret"
+done
+
+start "an account's name is read from an answer written on one line"
+refused_pull
+github 1 "$CODE"
+github 2 "$TOKEN"
+github 3 '{"login":"octocat","id":1,"plan":{"name":"free"}}'
+run --host dokploy --url https://promento.example
+status_is 0
+has docker.env "PROMENTO_REGISTRY_USER=octocat"
+
+start "GitHub asking to slow down lengthens the wait"
+refused_pull
+github 1 "$CODE"
+github 2 "error=slow_down&error_description=Too+many+requests&interval=10"
+github 3 "$TOKEN"
+account 4
+run --host dokploy --url https://promento.example
+status_is 0
+[ "$(tr '\n' ' ' < "$dir/sleep.calls")" = "5 10 " ] || wrong "sleep was asked: $(tr '\n' ' ' < "$dir/sleep.calls")"
+
+start "a code that lapsed, and one that was refused, each end the run in one sentence"
+refused_pull
+github 1 "$CODE"
+github 2 "error=expired_token&error_description=The+device+code+has+expired."
+run --host dokploy --url https://promento.example
+status_is 1
+says "$NOT_IN_TIME"
+: > "$dir/curl.calls"
+refused_pull
+github 2 "error=access_denied&error_description=The+authorization+request+was+denied."
+run --host dokploy --url https://promento.example
+status_is 1
+says "promento: the sign-in was refused on GitHub."
+lacks docker.calls "<login>"
+lacks docker.calls "<run>"
+
+start "a GitHub that does not answer names the two flags"
+refused_pull
+run --host dokploy --url https://promento.example
+status_is 1
+says "$NO_GITHUB"
+empty sleep.calls
+
+start "an answer that is neither a code, a token nor an error GitHub names ends the run"
+refused_pull
+github 1 "<html>Unicorn</html>"
+run --host dokploy --url https://promento.example
+status_is 1
+says "$NO_GITHUB"
+: > "$dir/curl.calls"
+refused_pull
+github 1 "$CODE"
+github 2 "error=unsupported_grant_type"
+run --host dokploy --url https://promento.example
+status_is 1
+says "$NO_GITHUB"
+
+start "a wait as long as the code lasts ends the run: it never waits without a bound"
+refused_pull
+github 1 "device_code=3584d83530557fdd1f46af8289938c8ef79f9dc5&expires_in=10&interval=5&user_code=WDJB-MJHT"
+github 2 "$PENDING"
+github 3 "$PENDING"
+github 4 "$PENDING"
+run --host dokploy --url https://promento.example
+status_is 1
+says "$NOT_IN_TIME"
+[ "$(tr '\n' ' ' < "$dir/sleep.calls")" = "5 5 " ] || wrong "sleep was asked: $(tr '\n' ' ' < "$dir/sleep.calls")"
+
+start "an account GitHub does not name ends the run"
+refused_pull
+github 1 "$CODE"
+github 2 "$TOKEN"
+github 3 '{"message":"Bad credentials"}'
+run --host dokploy --url https://promento.example
+status_is 1
+says "promento: GitHub did not say whose sign-in this is."
+lacks docker.calls "<login>"
+
 finish
 printf '%s cases, %s failed\n' "$cases" "$failures"
 [ "$failures" -eq 0 ]

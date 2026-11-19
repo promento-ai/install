@@ -12,6 +12,10 @@ set -eu
 # The registry Promento's images are pulled from.
 REGISTRY="ghcr.io"
 
+# GitHub's device sign-in: GitHub CLI's OAuth application, as Promento's hub signs in, and where a code is approved.
+GITHUB_CLIENT_ID="178c6fc778ccc68e1d6a"
+DEVICE_ADDRESS="https://github.com/login/device"
+
 # The kinds of host, and the image of each.
 HOSTS="dokploy"
 image_of() {
@@ -137,6 +141,53 @@ fi
 
 docker info > /dev/null 2>&1 || fail "Docker does not answer: start it, or run this as a user allowed to use it."
 
+# One field of a form GitHub answers, `name=value&name=value`.
+field() { printf '%s\n' "$1" | tr '&' '\n' | sed -n "s/^$2=//p" | head -n 1; }
+
+# GitHub's device sign-in, asking to read packages alone: the script prints an address and a code, and waits while the
+# owner approves the code in any browser, on any machine. It sets the registry's user and token. Nothing is read from a
+# terminal; the device code and the token go to curl by its standard input, never as an argument.
+device_sign_in() {
+  unanswered="GitHub does not answer: --registry-user and --registry-token-file give a user and a token instead."
+  lapsed="the code was not approved in time: run the command again."
+
+  started=$(printf 'client_id=%s&scope=read:packages' "$GITHUB_CLIENT_ID" |
+    curl -fsS -X POST https://github.com/login/device/code --data @-) || fail "$unanswered"
+  device_code=$(field "$started" device_code)
+  user_code=$(field "$started" user_code)
+  interval=$(field "$started" interval)
+  expires_in=$(field "$started" expires_in)
+  [ -n "$device_code" ] && [ -n "$user_code" ] || fail "$unanswered"
+  case "$interval" in '' | *[!0-9]*) interval=5 ;; esac
+  case "$expires_in" in '' | *[!0-9]*) expires_in=900 ;; esac
+
+  say "Promento's images are private: sign in to GitHub to read them."
+  say "Open $DEVICE_ADDRESS and enter the code $user_code"
+
+  waited=0
+  while :; do
+    sleep "$interval"
+    waited=$((waited + interval))
+    answer=$(printf 'client_id=%s&device_code=%s&grant_type=urn:ietf:params:oauth:grant-type:device_code' "$GITHUB_CLIENT_ID" "$device_code" |
+      curl -fsS -X POST https://github.com/login/oauth/access_token --data @-) || fail "$unanswered"
+    registry_token=$(field "$answer" access_token)
+    [ -z "$registry_token" ] || break
+    case "$(field "$answer" error)" in
+      authorization_pending) ;;
+      slow_down) interval=$((interval + 5)) ;;
+      expired_token) fail "$lapsed" ;;
+      access_denied) fail "the sign-in was refused on GitHub." ;;
+      *) fail "$unanswered" ;;
+    esac
+    [ "$waited" -lt "$expires_in" ] || fail "$lapsed"
+  done
+
+  account=$(printf 'header = "Authorization: Bearer %s"\n' "$registry_token" | curl -fsS -K - https://api.github.com/user) ||
+    fail "GitHub did not say whose sign-in this is."
+  registry_user=$(printf '%s\n' "$account" | sed -n 's/.*"login"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+  [ -n "$registry_user" ] || fail "GitHub did not say whose sign-in this is."
+}
+
 # A sign-in to the registry is written in a Docker configuration directory of the run's own, removed at the run's end
 # whatever the end: this machine's Docker keeps no login of Promento's.
 config=""
@@ -154,7 +205,9 @@ if ! refusal=$(docker pull "$image" 2>&1); then
     *) fail "$(printf '%s\n' "$refusal" | tail -n 1)" ;;
   esac
   if [ -z "$registry_user" ] || [ -z "$registry_token" ]; then
-    fail "Promento's images are private: --registry-user and --registry-token-file give a GitHub user and a token that reads packages."
+    [ -z "$yes" ] ||
+      fail "Promento's images are private: --registry-user and --registry-token-file give a GitHub user and a token that reads packages."
+    device_sign_in
   fi
   config=$(mktemp -d)
   printf '%s' "$registry_token" | docker --config "$config" login "$REGISTRY" -u "$registry_user" --password-stdin > /dev/null 2>&1 ||
