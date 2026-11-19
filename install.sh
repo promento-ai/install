@@ -9,6 +9,9 @@
 # standard error; standard output is the installer's, and so is its exit status. `--help` lists its flags.
 set -eu
 
+# The registry Promento's images are pulled from.
+REGISTRY="ghcr.io"
+
 # The kinds of host, and the image of each.
 HOSTS="dokploy"
 image_of() {
@@ -134,10 +137,29 @@ fi
 
 docker info > /dev/null 2>&1 || fail "Docker does not answer: start it, or run this as a user allowed to use it."
 
+# A sign-in to the registry is written in a Docker configuration directory of the run's own, removed at the run's end
+# whatever the end: this machine's Docker keeps no login of Promento's.
+config=""
+clean() { [ -z "$config" ] || rm -rf "$config"; }
+trap clean EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 # The pull, tried first with no sign-in: this machine's Docker may read Promento's images already, and they are public
-# one day. A pull Docker refuses for anything else is said as Docker says it.
+# one day. One the registry refuses for want of a sign-in says `unauthorized`, and is made again signed in, once; a
+# pull that fails for anything else is said as Docker says it.
 if ! refusal=$(docker pull "$image" 2>&1); then
-  fail "$(printf '%s\n' "$refusal" | tail -n 1)"
+  case "$refusal" in
+    *unauthorized*) ;;
+    *) fail "$(printf '%s\n' "$refusal" | tail -n 1)" ;;
+  esac
+  if [ -z "$registry_user" ] || [ -z "$registry_token" ]; then
+    fail "Promento's images are private: --registry-user and --registry-token-file give a GitHub user and a token that reads packages."
+  fi
+  config=$(mktemp -d)
+  printf '%s' "$registry_token" | docker --config "$config" login "$REGISTRY" -u "$registry_user" --password-stdin > /dev/null 2>&1 ||
+    fail "$REGISTRY refused that user and token."
+  refusal=$(docker --config "$config" pull "$image" 2>&1) || fail "$(printf '%s\n' "$refusal" | tail -n 1)"
 fi
 
 # The registry's user and token go to the installer together or not at all, for its platform's own pulls.

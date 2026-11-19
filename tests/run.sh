@@ -207,6 +207,90 @@ run --host dokploy --url https://promento.example
 status_is 0
 lacks docker.calls "<-it>"
 
+# --- A pull refused, with a user and a token given ------------------------------------------------------------------
+
+REFUSED="1|Error response from daemon: Head \"https://ghcr.io/v2/promento-ai/service-host-dokploy/manifests/latest\": unauthorized"
+NEEDS_SIGN_IN="promento: Promento's images are private: --registry-user and --registry-token-file give a GitHub user and a token that reads packages."
+
+# The configuration directory `login` was given, and whether it is still there.
+config_dir() { sed -n 's/ exists$//p' "$dir/docker.config" 2> /dev/null; }
+config_removed() {
+  made=$(config_dir)
+  [ -n "$made" ] || wrong "login was given no configuration directory that exists (docker.config: $(cat "$dir/docker.config" 2> /dev/null))"
+  [ -z "$made" ] || [ ! -e "$made" ] || wrong "the configuration directory $made is left behind"
+}
+
+start "a pull refused is made again signed in, with the user and the token of a file, in a directory of the run's own"
+printf '%s\n0|\n' "$REFUSED" > "$dir/docker.pull"
+printf 'the-token-of-the-file\n' > "$dir/token"
+run --host dokploy --url https://promento.example --registry-user octo --registry-token-file "$dir/token"
+status_is 0
+made=$(config_dir)
+has docker.calls "<pull> <$IMAGE:latest>"
+has docker.calls "<--config> <$made> <login> <ghcr.io> <-u> <octo> <--password-stdin>"
+has docker.calls "<--config> <$made> <pull> <$IMAGE:latest>"
+has docker.stdin "the-token-of-the-file"
+has docker.env "PROMENTO_REGISTRY_USER=octo"
+has docker.env "PROMENTO_REGISTRY_TOKEN=the-token-of-the-file"
+lacks docker.calls "the-token-of-the-file"
+lacks err "the-token-of-the-file"
+config_removed
+empty curl.calls
+
+start "the user and the token of the variables sign in the same"
+printf '%s\n0|\n' "$REFUSED" > "$dir/docker.pull"
+PROMENTO_REGISTRY_USER=octo
+PROMENTO_REGISTRY_TOKEN="the-token-of-the-variable"
+export PROMENTO_REGISTRY_USER PROMENTO_REGISTRY_TOKEN
+run --host dokploy --url https://promento.example --yes
+status_is 0
+has docker.stdin "the-token-of-the-variable"
+has docker.env "PROMENTO_REGISTRY_TOKEN=the-token-of-the-variable"
+lacks docker.calls "the-token-of-the-variable"
+config_removed
+
+start "a login the registry refuses ends the run, and leaves nothing"
+printf '%s\n' "$REFUSED" > "$dir/docker.pull"
+printf '1' > "$dir/docker.login"
+printf 'the-token\n' > "$dir/token"
+run --host dokploy --url https://promento.example --registry-user octo --registry-token-file "$dir/token"
+status_is 1
+says "promento: ghcr.io refused that user and token."
+lacks docker.calls "<run>"
+config_removed
+
+start "a second pull that fails is said as Docker says it, and leaves nothing"
+printf '%s\n1|Error response from daemon: manifest unknown\n' "$REFUSED" > "$dir/docker.pull"
+printf 'the-token\n' > "$dir/token"
+run --host dokploy --url https://promento.example --registry-user octo --registry-token-file "$dir/token"
+status_is 1
+says "promento: Error response from daemon: manifest unknown"
+lacks docker.calls "<run>"
+config_removed
+
+start "with --yes and nothing given, a pull refused names the two flags, and GitHub is not asked"
+printf '%s\n' "$REFUSED" > "$dir/docker.pull"
+run --host dokploy --url https://promento.example --yes
+status_is 1
+says "$NEEDS_SIGN_IN"
+lacks docker.calls "<login>"
+empty curl.calls
+
+start "with --yes, a user with no token is nothing given"
+printf '%s\n' "$REFUSED" > "$dir/docker.pull"
+run --host dokploy --url https://promento.example --registry-user octo --yes
+status_is 1
+says "$NEEDS_SIGN_IN"
+empty curl.calls
+
+start "after a sign-in, the script still ends with the installer's status, and leaves nothing"
+printf '%s\n0|\n' "$REFUSED" > "$dir/docker.pull"
+printf '3' > "$dir/docker.run"
+printf 'the-token\n' > "$dir/token"
+run --host dokploy --url https://promento.example --registry-user octo --registry-token-file "$dir/token"
+status_is 3
+config_removed
+
 finish
 printf '%s cases, %s failed\n' "$cases" "$failures"
 [ "$failures" -eq 0 ]
