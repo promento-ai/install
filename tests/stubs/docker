@@ -1,0 +1,60 @@
+#!/bin/sh
+# A stand-in for docker, first on PATH while tests/run.sh runs install.sh. It writes what it is given in the case's
+# directory (PROMENTO_TEST_DIR) and answers what the case wrote there:
+#
+#   docker.calls   one line per call, each argument between < and >
+#   docker.stdin   what `login` read on its standard input
+#   docker.env     the three variables `run` was started with, or "unset"
+#   docker.config  the configuration directory `login` was given, and whether it existed
+#   docker.info    the status `info` exits with (0 without the file)
+#   docker.pull    one line per pull, "status|message", used in order, the last one again once they are spent
+#   docker.login   the status `login` exits with (0 without the file)
+#   docker.run     the status `run` exits with (0 without the file)
+set -u
+dir=${PROMENTO_TEST_DIR:?}
+
+line=""
+for argument in "$@"; do line="$line <$argument>"; done
+printf '%s\n' "${line# }" >> "$dir/docker.calls"
+
+config=""
+if [ "${1:-}" = "--config" ]; then
+  config=$2
+  shift 2
+fi
+command=${1:-}
+
+status_of() { if [ -f "$dir/$1" ]; then cat "$dir/$1"; else printf '0'; fi; }
+variable() { eval "if [ -n \"\${$1+set}\" ]; then printf '%s=%s\\n' \"$1\" \"\$$1\"; else printf '%s unset\\n' \"$1\"; fi"; }
+
+case "$command" in
+  info)
+    exit "$(status_of docker.info)"
+    ;;
+  pull)
+    if [ ! -s "$dir/docker.pull" ]; then exit 0; fi
+    answer=$(head -n 1 "$dir/docker.pull")
+    if [ "$(wc -l < "$dir/docker.pull")" -gt 1 ]; then
+      tail -n +2 "$dir/docker.pull" > "$dir/docker.pull.next"
+      mv "$dir/docker.pull.next" "$dir/docker.pull"
+    fi
+    message=${answer#*|}
+    [ -z "$message" ] || printf '%s\n' "$message" >&2
+    exit "${answer%%|*}"
+    ;;
+  login)
+    cat > "$dir/docker.stdin"
+    if [ -d "$config" ]; then printf '%s exists\n' "$config" > "$dir/docker.config"; else printf '%s missing\n' "$config" > "$dir/docker.config"; fi
+    exit "$(status_of docker.login)"
+    ;;
+  run)
+    {
+      variable PROMENTO_PLATFORM_KEY
+      variable PROMENTO_REGISTRY_USER
+      variable PROMENTO_REGISTRY_TOKEN
+    } > "$dir/docker.env"
+    printf 'Promento answers at https://promento.example\n'
+    exit "$(status_of docker.run)"
+    ;;
+esac
+exit 0
