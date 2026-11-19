@@ -30,6 +30,15 @@ for stood_in in docker curl sleep; do
   fi
 done
 
+# Whether the waits are counted: a shell that sleeps by itself (busybox's, which runs its own sleep before any on PATH)
+# never reaches the stand-in, so it really waits, and its waits are not counted.
+counts_waits=""
+probe=$(mktemp -d)
+# shellcheck disable=SC2086 # As in `run`: the shell may be two words.
+PATH="$here/stubs:$PATH" PROMENTO_TEST_DIR="$probe" $shell -c 'sleep 0'
+[ ! -s "$probe/sleep.calls" ] || counts_waits=1
+rm -rf "$probe"
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 failures=0
@@ -82,6 +91,12 @@ has() { grep -Fxq -- "$2" "$dir/$1" || wrong "$1 lacks the line: $2 (it holds: $
 holds() { grep -Fq -- "$2" "$dir/$1" || wrong "$1 does not hold: $2"; }
 lacks() { if grep -Fq -- "$2" "$dir/$1" 2> /dev/null; then wrong "$1 holds: $2"; fi; }
 empty() { [ ! -s "$dir/$1" ] || wrong "$1 is not empty: $(tr '\n' '|' < "$dir/$1")"; }
+# The waits the script made, in order, where they are counted.
+waited() {
+  [ -n "$counts_waits" ] || return 0
+  asked=$(tr '\n' ' ' < "$dir/sleep.calls")
+  [ "$asked" = "$1 " ] || wrong "the script waited: ${asked:-nothing}, expected: $1"
+}
 nothing_called() {
   empty docker.calls
   empty curl.calls
@@ -349,7 +364,7 @@ lacks curl.env "PROMENTO_PLATFORM_KEY set"
 has curl.stdin "client_id=178c6fc778ccc68e1d6a&scope=read:packages"
 has curl.stdin "client_id=178c6fc778ccc68e1d6a&device_code=3584d83530557fdd1f46af8289938c8ef79f9dc5&grant_type=urn:ietf:params:oauth:grant-type:device_code"
 has curl.stdin "header = \"Authorization: Bearer gho_16C7e42F292c6912E7710c838347Ae178B4a\""
-[ "$(tr '\n' ' ' < "$dir/sleep.calls")" = "5 5 5 " ] || wrong "sleep was asked: $(tr '\n' ' ' < "$dir/sleep.calls")"
+waited "5 5 5"
 made=$(config_dir)
 has docker.calls "<--config> <$made> <login> <ghcr.io> <-u> <octocat> <--password-stdin>"
 has docker.stdin "gho_16C7e42F292c6912E7710c838347Ae178B4a"
@@ -388,7 +403,7 @@ github 3 "$TOKEN"
 account 4
 run --host dokploy --url https://promento.example
 status_is 0
-[ "$(tr '\n' ' ' < "$dir/sleep.calls")" = "5 10 " ] || wrong "sleep was asked: $(tr '\n' ' ' < "$dir/sleep.calls")"
+waited "5 10"
 
 start "a code that lapsed, and one that was refused, each end the run in one sentence"
 refused_pull
@@ -436,7 +451,7 @@ github 4 "$PENDING"
 run --host dokploy --url https://promento.example
 status_is 1
 says "$NOT_IN_TIME"
-[ "$(tr '\n' ' ' < "$dir/sleep.calls")" = "5 5 " ] || wrong "sleep was asked: $(tr '\n' ' ' < "$dir/sleep.calls")"
+waited "5 5"
 
 start "an account GitHub does not name ends the run"
 refused_pull
@@ -529,14 +544,14 @@ github 2 "$TOKEN"
 account 3
 run --host dokploy --url https://promento.example
 status_is 0
-has sleep.calls "5"
+waited "5"
 : > "$dir/curl.calls"
 : > "$dir/sleep.calls"
 refused_pull
 github 1 "device_code=3584d83530557fdd1f46af8289938c8ef79f9dc5&expires_in=0899&interval=08&user_code=WDJB-MJHT"
 run --host dokploy --url https://promento.example
 status_is 0
-has sleep.calls "8"
+waited "8"
 
 finish
 printf '%s cases, %s failed\n' "$cases" "$failures"
