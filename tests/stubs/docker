@@ -4,8 +4,10 @@
 #
 #   docker.calls   one line per call, each argument between < and >
 #   docker.stdin   what `login` read on its standard input
-#   docker.env     the three variables `run` was started with, or "unset"
+#   docker.env     the three variables `run` was started with, or "unset"; and whether `login`'s directory is gone
 #   docker.config  the configuration directory `login` was given, and whether it existed
+#   docker.seed    the config.json that directory held when `login` ran
+#   docker.hangup  when the file exists, `login` hangs the script up (HUP to its parent) before it answers
 #   docker.info    the status `info` exits with (0 without the file)
 #   docker.pull    one line per pull, "status|message", used in order, the last one again once they are spent
 #   docker.login   the status `login` exits with (0 without the file)
@@ -45,6 +47,9 @@ case "$command" in
   login)
     cat > "$dir/docker.stdin"
     if [ -d "$config" ]; then printf '%s exists\n' "$config" > "$dir/docker.config"; else printf '%s missing\n' "$config" > "$dir/docker.config"; fi
+    if [ -f "$config/config.json" ]; then cat "$config/config.json" > "$dir/docker.seed"; fi
+    # A terminal that hangs up while the sign-in is made: the script is the stand-in's parent.
+    if [ -f "$dir/docker.hangup" ]; then kill -HUP "$PPID"; fi
     exit "$(status_of docker.login)"
     ;;
   run)
@@ -52,6 +57,8 @@ case "$command" in
       variable PROMENTO_PLATFORM_KEY
       variable PROMENTO_REGISTRY_USER
       variable PROMENTO_REGISTRY_TOKEN
+      made=$(sed -n 's/ exists$//p' "$dir/docker.config" 2> /dev/null)
+      if [ -n "$made" ] && [ -e "$made" ]; then printf 'configuration directory kept\n'; else printf 'configuration directory gone\n'; fi
     } > "$dir/docker.env"
     printf 'Promento answers at https://promento.example\n'
     exit "$(status_of docker.run)"

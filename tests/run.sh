@@ -18,6 +18,18 @@ if (: < /dev/tty) 2> /dev/null && [ -z "${PROMENTO_TESTS_DETACHED:-}" ]; then
   exit 2
 fi
 
+# The shell that runs install.sh: sh, or the one PROMENTO_TEST_SH names ("busybox sh").
+shell=${PROMENTO_TEST_SH:-sh}
+
+# No case may reach the machine's own docker, curl or sleep: each resolves to its stand-in, or nothing runs.
+for stood_in in docker curl sleep; do
+  found=$(PATH="$here/stubs:$PATH" command -v "$stood_in" || true)
+  if [ "$found" != "$here/stubs/$stood_in" ]; then
+    printf 'tests/run.sh: %s resolves to %s, not to its stand-in in tests/stubs: nothing is run.\n' "$stood_in" "${found:-nothing}" >&2
+    exit 2
+  fi
+done
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 failures=0
@@ -57,7 +69,8 @@ wrong() {
 # Runs install.sh with the arguments given; its status, standard output and standard error are kept.
 run() {
   status=0
-  PATH="$here/stubs:$PATH" PROMENTO_TEST_DIR="$dir" sh "$script" "$@" > "$dir/out" 2> "$dir/err" || status=$?
+  # shellcheck disable=SC2086 # The shell that runs the script may be two words: "busybox sh".
+  PATH="$here/stubs:$PATH" PROMENTO_TEST_DIR="$dir" $shell "$script" "$@" > "$dir/out" 2> "$dir/err" || status=$?
 }
 
 status_is() { [ "$status" -eq "$1" ] || wrong "status $status, expected $1"; }
@@ -329,9 +342,10 @@ account 5
 run --host dokploy --url https://promento.example
 status_is 0
 says "Open https://github.com/login/device and enter the code WDJB-MJHT"
-has curl.calls "<-fsS> <-X> <POST> <https://github.com/login/device/code> <--data> <@->"
-has curl.calls "<-fsS> <-X> <POST> <https://github.com/login/oauth/access_token> <--data> <@->"
-has curl.calls "<-fsS> <-K> <-> <https://api.github.com/user>"
+has curl.calls "<-fsS> <--connect-timeout> <10> <--max-time> <30> <-X> <POST> <https://github.com/login/device/code> <--data> <@->"
+has curl.calls "<-fsS> <--connect-timeout> <10> <--max-time> <30> <-X> <POST> <https://github.com/login/oauth/access_token> <--data> <@->"
+has curl.calls "<-fsS> <--connect-timeout> <10> <--max-time> <30> <-K> <-> <https://api.github.com/user>"
+lacks curl.env "PROMENTO_PLATFORM_KEY set"
 has curl.stdin "client_id=178c6fc778ccc68e1d6a&scope=read:packages"
 has curl.stdin "client_id=178c6fc778ccc68e1d6a&device_code=3584d83530557fdd1f46af8289938c8ef79f9dc5&grant_type=urn:ietf:params:oauth:grant-type:device_code"
 has curl.stdin "header = \"Authorization: Bearer gho_16C7e42F292c6912E7710c838347Ae178B4a\""
@@ -433,6 +447,96 @@ run --host dokploy --url https://promento.example
 status_is 1
 says "promento: GitHub did not say whose sign-in this is."
 lacks docker.calls "<login>"
+
+# --- What a review asked ---------------------------------------------------------------------------------------------
+
+start "--help beside a kind of host is the script's own, and touches nothing"
+run --host dokploy --help
+status_is 0
+holds out "--key-file"
+lacks out "--help\` lists them"
+nothing_called
+
+start "-y and -h are no flags of the script's: they reach the installer"
+run --host dokploy -y -h
+status_is 0
+has docker.calls "$RUN <$IMAGE:latest> <install> <-y> <-h>"
+
+start "a version that holds a line break is no version"
+run --host dokploy --yes --version "v1.2.3
+x"
+status_is 1
+says "promento: --version is a version, v<x.y.z>."
+nothing_called
+
+start "a pull that succeeds signs in to nothing"
+run --host dokploy --url https://promento.example --registry-user octo --yes
+status_is 0
+lacks docker.calls "<login>"
+lacks docker.calls "<--config>"
+says "Pulling $IMAGE:latest"
+
+start "a user and a token given are tried whatever Docker said of the first pull"
+printf '1|Error response from daemon: denied: denied\n0|\n' > "$dir/docker.pull"
+printf 'the-token\n' > "$dir/token"
+run --host dokploy --url https://promento.example --registry-user octo --registry-token-file "$dir/token"
+status_is 0
+holds docker.calls "<login> <ghcr.io> <-u> <octo> <--password-stdin>"
+has docker.env "PROMENTO_REGISTRY_USER=octo"
+
+start "a refusal is read whatever its capitals"
+printf '1|Error response from daemon: 401 Unauthorized\n0|\n' > "$dir/docker.pull"
+github 1 "$CODE"
+github 2 "$TOKEN"
+account 3
+run --host dokploy --url https://promento.example
+status_is 0
+holds docker.calls "<login> <ghcr.io> <-u> <octocat> <--password-stdin>"
+
+start "the sign-in is written in the run's own directory, by no credential helper of the machine's, and is gone before the installer runs"
+printf '%s\n0|\n' "$REFUSED" > "$dir/docker.pull"
+printf 'the-token\n' > "$dir/token"
+run --host dokploy --url https://promento.example --registry-user octo --registry-token-file "$dir/token"
+status_is 0
+has docker.seed '{"auths":{"ghcr.io":{}}}'
+has docker.env "configuration directory gone"
+
+start "a hang-up during the sign-in leaves no directory behind"
+printf '%s\n0|\n' "$REFUSED" > "$dir/docker.pull"
+printf 'the-token\n' > "$dir/token"
+: > "$dir/docker.hangup"
+run --host dokploy --url https://promento.example --registry-user octo --registry-token-file "$dir/token"
+status_is 129
+lacks docker.calls "<run>"
+config_removed
+
+start "the key reaches the installer alone: GitHub's calls are not given it"
+refused_pull
+printf 'the-key-of-the-file\n' > "$dir/key"
+github 1 "$CODE"
+github 2 "$TOKEN"
+account 3
+run --host dokploy --url https://promento.example --key-file "$dir/key"
+status_is 0
+has docker.env "PROMENTO_PLATFORM_KEY=the-key-of-the-file"
+has curl.env "PROMENTO_PLATFORM_KEY unset"
+lacks curl.env "PROMENTO_PLATFORM_KEY set"
+
+start "an interval of nothing, or written with a leading zero, waits five or its own seconds"
+refused_pull
+github 1 "device_code=3584d83530557fdd1f46af8289938c8ef79f9dc5&expires_in=899&interval=0&user_code=WDJB-MJHT"
+github 2 "$TOKEN"
+account 3
+run --host dokploy --url https://promento.example
+status_is 0
+has sleep.calls "5"
+: > "$dir/curl.calls"
+: > "$dir/sleep.calls"
+refused_pull
+github 1 "device_code=3584d83530557fdd1f46af8289938c8ef79f9dc5&expires_in=0899&interval=08&user_code=WDJB-MJHT"
+run --host dokploy --url https://promento.example
+status_is 0
+has sleep.calls "8"
 
 finish
 printf '%s cases, %s failed\n' "$cases" "$failures"
